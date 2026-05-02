@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   """
 
   alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.Config
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
@@ -30,7 +31,15 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   def execute(tool, arguments, opts \\ []) do
     case tool do
       @linear_graphql_tool ->
-        execute_linear_graphql(arguments, opts)
+        if linear_tracker?() do
+          execute_linear_graphql(arguments, opts)
+        else
+          failure_response(%{
+            "error" => %{
+              "message" => "`linear_graphql` is only available when `tracker.kind` is `linear`."
+            }
+          })
+        end
 
       other ->
         failure_response(%{
@@ -44,13 +53,23 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @spec tool_specs() :: [map()]
   def tool_specs do
-    [
-      %{
-        "name" => @linear_graphql_tool,
-        "description" => @linear_graphql_description,
-        "inputSchema" => @linear_graphql_input_schema
-      }
-    ]
+    if linear_tracker?() do
+      [
+        %{
+          "name" => @linear_graphql_tool,
+          "description" => @linear_graphql_description,
+          "inputSchema" => @linear_graphql_input_schema
+        }
+      ]
+    else
+      []
+    end
+  end
+
+  defp linear_tracker? do
+    Config.settings!().tracker.kind == "linear"
+  rescue
+    _ -> true
   end
 
   defp execute_linear_graphql(arguments, opts) do

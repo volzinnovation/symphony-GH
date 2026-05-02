@@ -394,12 +394,11 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_project_link_lines do
     project_part =
-      case Config.settings!().tracker.project_slug do
-        project_slug when is_binary(project_slug) and project_slug != "" ->
-          colorize(linear_project_url(project_slug), @ansi_cyan)
-
-        _ ->
-          colorize("n/a", @ansi_gray)
+      Config.settings!().tracker
+      |> tracker_url()
+      |> case do
+        url when is_binary(url) -> colorize(url, @ansi_cyan)
+        _ -> colorize("n/a", @ansi_gray)
       end
 
     project_line = colorize("│ Project: ", @ansi_bold) <> project_part
@@ -427,7 +426,15 @@ defmodule SymphonyElixir.StatusDashboard do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
 
-  defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
+  defp tracker_url(%{kind: "github", repository: repository}) when is_binary(repository) and repository != "" do
+    "https://github.com/#{repository}/issues"
+  end
+
+  defp tracker_url(%{project_slug: project_slug}) when is_binary(project_slug) and project_slug != "" do
+    "https://linear.app/project/#{project_slug}/issues"
+  end
+
+  defp tracker_url(_tracker), do: nil
 
   defp dashboard_url do
     dashboard_url(Config.settings!().server.host, Config.server_port(), HttpServer.bound_port())

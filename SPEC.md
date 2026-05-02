@@ -16,7 +16,7 @@ behavior.
 ## 1. Problem Statement
 
 Symphony is a long-running automation service that continuously reads work from an issue tracker
-(Github issues in this specification version), creates an isolated workspace for each issue, and runs a
+(GitHub issues in this specification version), creates an isolated workspace for each issue, and runs a
 coding agent session for that issue inside the workspace.
 
 The service solves five operational problems:
@@ -27,7 +27,7 @@ The service solves five operational problems:
 - It keeps the workflow policy in-repo (`WORKFLOW.md`) so teams version the agent prompt and runtime
   settings with their code.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
-- It operates an entire service with Github Actions and monitors the action execution success and operational status and fixes observed errors and issues by itself creating new issues for their resolution and iterating autonomously until issues are resolved.
+- It operates an entire service with GitHub Actions and monitors the action execution success and operational status and fixes observed errors and issues by itself creating new issues for their resolution and iterating autonomously until issues are resolved.
 
 Implementations are expected to document their trust and safety posture explicitly. This
 specification does not require a single approval, sandbox, or operator-confirmation policy; some
@@ -114,7 +114,7 @@ Important boundary:
    - Emits structured runtime logs to one or more configured sinks.
   
 9. `Action Tracker Client`
-   - Fetches errors in Github actions.
+   - Fetches errors in GitHub actions.
    - Fetches current states for specific issue IDs (reconciliation).
    - Fetches terminal-state issues during startup cleanup.
    - Normalizes action payloads into a stable issue model.
@@ -137,7 +137,7 @@ Symphony is easiest to port when kept in these layers:
 4. `Execution Layer` (workspace + agent subprocess)
    - Filesystem lifecycle, workspace preparation, coding-agent protocol.
 
-5. `Integration Layer` (Github issue adapter)
+5. `Integration Layer` (GitHub issue adapter)
    - API calls and normalization for tracker data.
 
 6. `Observability Layer` (logs + OPTIONAL status surface)
@@ -145,8 +145,8 @@ Symphony is easiest to port when kept in these layers:
 
 ### 3.3 External Dependencies
 
-- Issue tracker API (Github issues in this specification version).
-- Action tracker API (Github actions in this specification version).
+- Issue tracker API (GitHub issues in this specification version).
+- Action tracker API (GitHub actions in this specification version).
 - Local filesystem for workspaces and logs.
 - OPTIONAL workspace population tooling (for example Git CLI, if used).
 - Coding-agent executable that supports the targeted Codex app-server mode.
@@ -360,10 +360,30 @@ Fields:
   - REQUIRED for dispatch.
   - Current supported value: `github`
 - `endpoint` (string)
-  - Default for `tracker.kind == "Github"`
+  - OPTIONAL for GitHub-backed implementations.
+  - `gh`-backed implementations MAY ignore this field and use the authenticated `gh`
+    host configuration instead.
 - `api_key` (string)
   - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
+  - OPTIONAL when the implementation uses an already-authenticated `gh` or higher-level
+    GitHub connector.
+  - When present for a `gh`-backed implementation, it SHOULD be provided to `gh` as
+    `GH_TOKEN`.
+- `repository` (string)
+  - REQUIRED for `tracker.kind == "github"`.
+  - Format: `owner/name`.
 - `project_slug` (string)
+  - Legacy alias for `repository`; new GitHub workflows SHOULD use `repository`.
+- `dispatch_label` (string)
+  - Default: `symphony`
+- `status_labels` (object)
+  - Maps Symphony states to GitHub labels.
+  - Default labels:
+    - `todo`: `symphony:todo`
+    - `in_progress`: `symphony:in-progress`
+    - `rework`: `symphony:rework`
+    - `human_review`: `symphony:human-review`
+    - `blocked`: `symphony:blocked`
 - `active_states` (list of strings)
   - Default: `Todo`, `In Progress`
 - `terminal_states` (list of strings)
@@ -481,7 +501,7 @@ Template input variables:
 Fallback prompt behavior:
 
 - If the workflow prompt body is empty, the runtime MAY use a minimal default prompt
-  (`You are working on an issue from Github I.`).
+  (`You are working on a GitHub issue.`).
 - Workflow file read/parse failures are configuration/validation errors and SHOULD NOT silently fall
   back to a prompt.
 
@@ -566,8 +586,9 @@ Validation checks:
 
 - Workflow file can be loaded and parsed.
 - `tracker.kind` is present and supported.
-- `tracker.api_key` is present after `$` resolution.
-- `tracker.project_slug` is present when REQUIRED by the selected tracker kind.
+- `tracker.repository` is present when REQUIRED by the selected tracker kind.
+- `tracker.api_key`, when configured, resolves `$` references; GitHub implementations MAY
+  rely on ambient authenticated `gh` state instead of requiring a configured token.
 - `codex.command` is present and non-empty.
 
 ### 6.4 Core Config Fields Summary (Cheat Sheet)
@@ -1055,22 +1076,28 @@ Optional client-side tool extension:
 - Unsupported tool names SHOULD still return a failure result using the targeted protocol and
   continue the session.
 
-- `query` MUST be a non-empty string.
-- `query` MUST contain exactly one GraphQL operation.
-- `variables` is OPTIONAL and, when present, MUST be a JSON object.
-- Implementations MAY additionally accept a raw GraphQL query string as shorthand input.
-- Execute one GraphQL operation per tool call.
-- If the provided document contains multiple operations, reject the tool call as invalid input.
-- `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Github issue endpoint and auth from the active Symphony workflow/runtime config; do
-  not require the coding agent to read raw tokens from disk.
+GitHub tool policy:
+
+- GitHub-backed implementations SHOULD use semantic GitHub operations, such as `gh issue list`,
+  `gh issue view`, `gh issue comment`, `gh issue edit`, `gh issue close`, GitHub Actions commands,
+  or equivalent higher-level GitHub connector tools.
+- GitHub-backed implementations MUST NOT require the coding agent to use a raw GitHub GraphQL
+  dynamic tool as the primary issue-tracker interface.
+- Reuse the configured GitHub repository and authenticated runtime/tooling context from the active
+  Symphony workflow; do not require the coding agent to read raw tokens from disk.
+- If GitHub client-side tools are exposed, they SHOULD be high-level tools for issue/comment/label
+  and Actions workflows rather than a generic GraphQL query executor.
 - Tool result semantics:
-  - transport success + no top-level GraphQL `errors` -> `success=true`
-  - top-level GraphQL `errors` present -> `success=false`, but preserve the GraphQL response body
-    for debugging
-  - invalid input, missing auth, or transport failure -> `success=false` with an error payload
-- Return the GraphQL response or error payload as structured tool output that the model can inspect
-  in-session.
+  - successful semantic operation -> `success=true`
+  - invalid input, missing auth, tool unavailable, non-zero `gh` exit, API response failure, or
+    malformed payload -> `success=false` with an error payload
+  - return enough structured output for the model to inspect the outcome in-session.
+
+Linear compatibility extension:
+
+- Implementations that still support Linear MAY expose a `linear_graphql` client-side tool.
+- That compatibility tool is scoped to Linear only and MUST NOT be repurposed as the GitHub
+  adapter surface.
 
 User-input-required policy:
 
@@ -1123,10 +1150,11 @@ Note:
 An implementation MUST support these tracker adapter operations:
 
 1. `fetch_candidate_issues()`
-   - Return issues in configured active states for a configured project.
+   - Return issues in configured active states for a configured GitHub repository and dispatch
+     label.
 
 2. `fetch_issues_by_states(state_names)`
-   - Used for startup terminal cleanup.
+   - Used for startup terminal cleanup and reconciliation support.
 
 3. `fetch_issue_states_by_ids(issue_ids)`
    - Used for active-run reconciliation.
@@ -1139,7 +1167,7 @@ Candidate issue normalization SHOULD produce fields listed in Section 4.1.1.
 Additional normalization details:
 
 - `labels` -> lowercase strings
-- `blocked_by` -> derived from inverse relations where relation type is `blocks`
+- `blocked_by` -> derived from the chosen GitHub representation when available
 - `priority` -> integer only (non-integers become null)
 - `created_at` and `updated_at` -> parse ISO-8601 timestamps
 
@@ -1149,7 +1177,11 @@ RECOMMENDED error categories:
 
 - `unsupported_tracker_kind`
 - `missing_tracker_api_key`
-- `missing_tracker_project_slug`
+- `missing_github_repository`
+- `github_tool_unavailable`
+- `github_tool_exit`
+- `github_malformed_payload`
+
 Orchestrator behavior on tracker errors:
 
 - Candidate fetch failure: log and skip dispatch for this tick.
@@ -1158,10 +1190,11 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Symphony does not require first-class tracker write APIs in the orchestrator, but implementations MAY
+provide them through the tracker adapter or through high-level agent tools.
 
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
+- Ticket mutations (state transitions, comments, PR metadata) SHOULD use `gh` or higher-level
+  GitHub tools.
 - The service remains a scheduler/runner and tracker reader.
 - Workflow-specific success often means "reached the next handoff state" (for example
   `Human Review`) rather than tracker terminal state `Done`.
@@ -1478,7 +1511,7 @@ API design notes:
 1. `Workflow/Config Failures`
    - Missing `WORKFLOW.md`
    - Invalid YAML front matter
-   - Unsupported tracker kind or missing tracker credentials/project slug
+   - Unsupported tracker kind or missing required GitHub repository/auth context
    - Missing coding-agent executable
 
 2. `Workspace Failures`
@@ -1496,9 +1529,9 @@ API design notes:
    - Stalled session (no activity)
 
 4. `Tracker Failures`
-   - API transport errors
-   - Non-200 status
-   - GraphQL errors
+   - GitHub tool/API transport errors
+   - Non-zero `gh` exits or non-2xx API responses
+   - Missing auth or repository access
    - malformed payloads
 
 5. `Observability Failures`
@@ -1896,7 +1929,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Front matter non-map returns typed error
 - Config defaults apply when OPTIONAL values are missing
 - `tracker.kind` validation enforces currently supported kind (`github issues`)
-- `tracker.api_key` works (including `$VAR` indirection)
+- `tracker.repository` is validated for GitHub issue tracking
+- `tracker.api_key` works when configured, including `$VAR` indirection
 - `$VAR` resolution works for tracker API key and path values
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
@@ -1921,14 +1955,17 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.3 Issue Tracker Client
 
-- Candidate issue fetch uses active states and project slug
+- Candidate issue fetch uses the configured repository, dispatch label, and active state labels
 - Empty `fetch_issues_by_states([])` returns empty without API call
-- Pagination preserves order across multiple pages
-- Blockers are normalized from inverse relations of type `blocks`
+- Pagination or bounded repeated fetches preserve deterministic issue order when implemented
+- Blockers are normalized when the chosen GitHub representation supports them
 - Labels are normalized to lowercase
 - Issue state refresh by ID returns minimal normalized issues
-- Issue state refresh query uses GraphQL ID typing (`[ID!]`) as specified in Section 11.2
-- Error mapping for request errors, non-200, GraphQL errors, malformed payloads
+- Issue state refresh accepts stable GitHub references such as `github:owner/repo#123`, `GH-123`,
+  `#123`, or `123`
+- Status updates use GitHub labels and closing semantics through `gh` or equivalent GitHub tools
+- Error mapping covers tool execution errors, non-zero exits or non-2xx responses, missing auth, and
+  malformed payloads
 
 ### 17.4 Orchestrator Dispatch, Reconciliation, and Retry
 
@@ -1997,7 +2034,7 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 These checks are RECOMMENDED for production readiness and MAY be skipped in CI when credentials,
 network access, or external service permissions are unavailable.
 
-- A real tracker smoke test can be run with valid credentials to Github
+- A real tracker smoke test can be run with valid credentials to GitHub
 - Real integration tests SHOULD use isolated test identifiers/workspaces and clean up tracker
   artifacts when practical.
 - A skipped real-integration test SHOULD be reported as skipped, not silently treated as passed.
@@ -2042,7 +2079,7 @@ Use the same validation profiles as Section 17:
   implementation details.
 - TODO: Add first-class tracker write APIs (comments/state transitions) in the orchestrator instead
   of only via agent tools.
-- TODO: Add pluggable issue tracker adapters beyond Github issue.
+- TODO: Add pluggable issue tracker adapters beyond GitHub issues.
 
 ### 18.3 Operational Validation Before Production (RECOMMENDED)
 

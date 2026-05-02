@@ -741,6 +741,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.endpoint == "https://api.linear.app/graphql"
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
+    assert config.tracker.repository == nil
+    assert config.tracker.dispatch_label == "symphony"
+
+    assert config.tracker.status_labels == %{
+             "blocked" => "symphony:blocked",
+             "human_review" => "symphony:human-review",
+             "in_progress" => "symphony:in-progress",
+             "rework" => "symphony:rework",
+             "todo" => "symphony:todo"
+           }
+
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
@@ -885,6 +896,53 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
     assert Config.settings!().codex.command == "codex app-server"
+  end
+
+  test "config accepts github tracker and requires a repository" do
+    previous_github_token = System.get_env("GITHUB_TOKEN")
+    previous_gh_token = System.get_env("GH_TOKEN")
+
+    System.delete_env("GITHUB_TOKEN")
+    System.put_env("GH_TOKEN", "gh-token")
+
+    on_exit(fn ->
+      restore_env("GITHUB_TOKEN", previous_github_token)
+      restore_env("GH_TOKEN", previous_gh_token)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      tracker_repository: "owner/repo",
+      tracker_status_labels: %{in_progress: "Symphony:In-Progress"}
+    )
+
+    config = Config.settings!()
+    assert config.tracker.kind == "github"
+    assert config.tracker.repository == "owner/repo"
+    assert config.tracker.api_key == "gh-token"
+    assert config.tracker.status_labels["in_progress"] == "Symphony:In-Progress"
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: "owner/repo",
+      tracker_repository: nil
+    )
+
+    assert Config.settings!().tracker.repository == "owner/repo"
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      tracker_repository: nil
+    )
+
+    assert {:error, :missing_github_repository} = Config.validate!()
   end
 
   test "config resolves $VAR references for env-backed secret and path values" do

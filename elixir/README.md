@@ -13,15 +13,17 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls Linear for candidate work
+1. Polls GitHub Issues or Linear for candidate work
 2. Creates a workspace per issue
 3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
    workspace
 4. Sends a workflow prompt to Codex
 5. Keeps Codex working on the issue until the work is done
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+During Linear-backed app-server sessions, Symphony also serves a client-side
+`linear_graphql` tool so that repo skills can make raw Linear GraphQL calls. In
+GitHub-backed mode the tracker adapter uses authenticated `gh` CLI operations;
+it does not expose a raw GitHub GraphQL tool to agents.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -30,18 +32,26 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
 
 1. Make sure your codebase is set up to work well with agents: see
    [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
+2. Authenticate the selected tracker:
+   - For GitHub, install and authenticate `gh` for the target repository. You
+     may also set `GITHUB_TOKEN` or `GH_TOKEN` when running in CI.
+   - For Linear, get a new personal token in Linear via Settings → Security &
+     access → Personal API keys, and set it as the `LINEAR_API_KEY` environment
+     variable.
 3. Copy this directory's `WORKFLOW.md` to your repo.
-4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
+4. Optionally copy the `commit`, `push`, `pull`, `land`, and tracker-specific skills to your repo.
    - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
      operations such as comment editing or upload flows.
+   - GitHub workflows should prefer `gh`/GitHub tools and semantic commands
+     rather than a raw GraphQL tool surface.
 5. Customize the copied `WORKFLOW.md` file for your project.
-   - To get your project's slug, right-click the project and copy its URL. The slug is part of the
-     URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
-     Team Settings → Workflow in Linear.
+   - For GitHub, set `tracker.repository` to `owner/repo` and decide which
+     labels map to Symphony states.
+   - For Linear, get your project's slug by right-clicking the project and
+     copying its URL. The slug is part of the URL.
+   - For Linear workflows, note that this repo historically depended on
+     non-standard Linear issue statuses such as "Rework" and "Human Review".
+     You can customize them in Team Settings → Workflow in Linear.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
 ## Prerequisites
@@ -88,8 +98,15 @@ Minimal example:
 ```md
 ---
 tracker:
-  kind: linear
-  project_slug: "..."
+  kind: github
+  repository: your-org/your-repo
+  dispatch_label: symphony
+  status_labels:
+    todo: symphony:todo
+    in_progress: symphony:in-progress
+    rework: symphony:rework
+    human_review: symphony:human-review
+    blocked: symphony:blocked
 workspace:
   root: ~/code/workspaces
 hooks:
@@ -102,7 +119,7 @@ codex:
   command: codex app-server
 ---
 
-You are working on a Linear issue {{ issue.identifier }}.
+You are working on a GitHub issue {{ issue.identifier }}.
 
 Title: {{ issue.title }} Body: {{ issue.description }}
 ```
@@ -127,7 +144,15 @@ Notes:
   `git clone ... .` there, along with any other setup commands you need.
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
-- `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.kind: github` uses `tracker.repository` as `owner/repo`. If
+  `tracker.repository` is absent, `tracker.project_slug` is accepted as a
+  compatibility alias.
+- The GitHub adapter shells out to `gh` and parses JSON. `tracker.api_key` is
+  optional when `gh` is already authenticated; when set, it is passed as
+  `GH_TOKEN` to `gh`. If unset, it falls back to `GITHUB_TOKEN` or `GH_TOKEN`
+  when present.
+- `tracker.kind: linear` reads `tracker.api_key` from `LINEAR_API_KEY` when
+  unset or when value is `$LINEAR_API_KEY`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
@@ -173,7 +198,7 @@ The observability UI now runs on a minimal Phoenix stack:
 make all
 ```
 
-Run the real external end-to-end test only when you want Symphony to create disposable Linear
+Run the real external end-to-end test only when you want Symphony to create disposable tracker
 resources and launch a real `codex app-server` session:
 
 ```bash
@@ -199,9 +224,10 @@ the transport representative without depending on long-lived external machines.
 
 Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` if you want `make e2e` to target real SSH hosts instead.
 
-The live test creates a temporary Linear project and issue, writes a temporary `WORKFLOW.md`, runs
-a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
-Linear issue, then marks the project completed so the run remains visible in Linear.
+The current live test creates a temporary Linear project and issue, writes a temporary
+`WORKFLOW.md`, runs a real agent turn, verifies the workspace side effect, requires Codex to
+comment on and close the Linear issue, then marks the project completed so the run remains visible
+in Linear. A GitHub real-integration profile should use isolated test issues and labels.
 
 ## FAQ
 

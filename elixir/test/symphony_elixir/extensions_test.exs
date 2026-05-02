@@ -6,6 +6,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixir.GitHub
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -36,6 +37,33 @@ defmodule SymphonyElixir.ExtensionsTest do
         _ ->
           Process.get({__MODULE__, :graphql_result})
       end
+    end
+  end
+
+  defmodule FakeGitHubClient do
+    def fetch_candidate_issues do
+      send(self(), :github_fetch_candidate_issues_called)
+      {:ok, [:candidate]}
+    end
+
+    def fetch_issues_by_states(states) do
+      send(self(), {:github_fetch_issues_by_states_called, states})
+      {:ok, states}
+    end
+
+    def fetch_issue_states_by_ids(issue_ids) do
+      send(self(), {:github_fetch_issue_states_by_ids_called, issue_ids})
+      {:ok, issue_ids}
+    end
+
+    def create_comment(issue_id, body) do
+      send(self(), {:github_create_comment_called, issue_id, body})
+      :ok
+    end
+
+    def update_issue_state(issue_id, state_name) do
+      send(self(), {:github_update_issue_state_called, issue_id, state_name})
+      :ok
     end
   end
 
@@ -203,6 +231,34 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+  end
+
+  test "tracker delegates to github adapter" do
+    Application.put_env(:symphony_elixir, :github_client_module, FakeGitHubClient)
+
+    on_exit(fn ->
+      Application.delete_env(:symphony_elixir, :github_client_module)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      tracker_repository: "owner/repo"
+    )
+
+    assert Config.settings!().tracker.kind == "github"
+    assert SymphonyElixir.Tracker.adapter() == GitHub.Adapter
+    assert {:ok, [:candidate]} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert_receive :github_fetch_candidate_issues_called
+    assert {:ok, ["Todo"]} = SymphonyElixir.Tracker.fetch_issues_by_states(["Todo"])
+    assert_receive {:github_fetch_issues_by_states_called, ["Todo"]}
+    assert {:ok, ["github:owner/repo#1"]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["github:owner/repo#1"])
+    assert_receive {:github_fetch_issue_states_by_ids_called, ["github:owner/repo#1"]}
+    assert :ok = SymphonyElixir.Tracker.create_comment("github:owner/repo#1", "comment")
+    assert_receive {:github_create_comment_called, "github:owner/repo#1", "comment"}
+    assert :ok = SymphonyElixir.Tracker.update_issue_state("github:owner/repo#1", "In Progress")
+    assert_receive {:github_update_issue_state_called, "github:owner/repo#1", "In Progress"}
   end
 
   test "linear adapter delegates reads and validates mutation responses" do

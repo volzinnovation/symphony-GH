@@ -22,6 +22,22 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert description =~ "Linear"
   end
 
+  test "tool_specs does not expose linear_graphql for github tracker mode" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_api_token: nil,
+      tracker_project_slug: nil,
+      tracker_repository: "owner/repo"
+    )
+
+    assert DynamicTool.tool_specs() == []
+
+    response = DynamicTool.execute("linear_graphql", %{"query" => "query Viewer { viewer { id } }"})
+
+    assert response["success"] == false
+    assert response["output"] =~ "only available when `tracker.kind` is `linear`"
+  end
+
   test "unsupported tools return a failure payload with the supported tool list" do
     response = DynamicTool.execute("not_a_real_tool", %{})
 

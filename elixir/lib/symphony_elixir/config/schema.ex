@@ -49,7 +49,10 @@ defmodule SymphonyElixir.Config.Schema do
       field(:endpoint, :string, default: "https://api.linear.app/graphql")
       field(:api_key, :string)
       field(:project_slug, :string)
+      field(:repository, :string)
       field(:assignee, :string)
+      field(:dispatch_label, :string, default: "symphony")
+      field(:status_labels, :map, default: %{})
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
     end
@@ -59,7 +62,18 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
+        [
+          :kind,
+          :endpoint,
+          :api_key,
+          :project_slug,
+          :repository,
+          :assignee,
+          :dispatch_label,
+          :status_labels,
+          :active_states,
+          :terminal_states
+        ],
         empty_values: []
       )
     end
@@ -366,10 +380,14 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
+    tracker_kind = settings.tracker.kind
+
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
-        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+      | api_key: resolve_tracker_api_key(settings.tracker.api_key, tracker_kind),
+        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE")),
+        repository: resolve_github_repository(settings.tracker),
+        status_labels: normalize_status_labels(settings.tracker.status_labels)
     }
 
     workspace = %{
@@ -478,6 +496,47 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp normalize_secret_value(_value), do: nil
+
+  defp resolve_tracker_api_key(value, "github") do
+    resolve_secret_setting(value, System.get_env("GITHUB_TOKEN") || System.get_env("GH_TOKEN"))
+  end
+
+  defp resolve_tracker_api_key(value, _kind) do
+    resolve_secret_setting(value, System.get_env("LINEAR_API_KEY"))
+  end
+
+  defp resolve_github_repository(%Tracker{kind: "github", repository: repository, project_slug: project_slug}) do
+    case normalize_secret_value(repository) do
+      nil -> normalize_secret_value(project_slug)
+      normalized -> normalized
+    end
+  end
+
+  defp resolve_github_repository(%Tracker{repository: repository}), do: normalize_secret_value(repository)
+
+  defp normalize_status_labels(labels) when is_map(labels) do
+    default_status_labels()
+    |> Map.merge(normalize_keys(labels))
+    |> Map.new(fn {key, value} -> {key, normalize_status_label(value)} end)
+  end
+
+  defp normalize_status_labels(_labels), do: default_status_labels()
+
+  defp normalize_status_label(value) when is_binary(value) do
+    String.trim(value)
+  end
+
+  defp normalize_status_label(value), do: value
+
+  defp default_status_labels do
+    %{
+      "todo" => "symphony:todo",
+      "in_progress" => "symphony:in-progress",
+      "rework" => "symphony:rework",
+      "human_review" => "symphony:human-review",
+      "blocked" => "symphony:blocked"
+    }
+  end
 
   defp default_turn_sandbox_policy(workspace) do
     %{

@@ -1,11 +1,17 @@
 ---
 tracker:
-  kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  kind: github
+  repository: openai/symphony
+  dispatch_label: symphony
+  status_labels:
+    todo: symphony:todo
+    in_progress: symphony:in-progress
+    rework: symphony:rework
+    human_review: symphony:human-review
+    blocked: symphony:blocked
   active_states:
     - Todo
     - In Progress
-    - Merging
     - Rework
   terminal_states:
     - Closed
@@ -36,7 +42,7 @@ codex:
     type: workspaceWrite
 ---
 
-You are working on a Linear ticket `{{ issue.identifier }}`
+You are working on a GitHub issue `{{ issue.identifier }}`
 
 {% if attempt %}
 Continuation context:
@@ -69,9 +75,10 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Prerequisite: Linear MCP or `linear_graphql` tool is available
+## Prerequisite: GitHub tooling is available
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+The agent should be able to talk to GitHub through authenticated `gh` or higher-level GitHub tools.
+Do not depend on a raw GitHub GraphQL tool. If no GitHub tooling is available, stop and record the blocker.
 
 ## Default posture
 
@@ -80,11 +87,11 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep ticket metadata current (state, checklist, acceptance criteria, links).
-- Treat a single persistent Linear comment as the source of truth for progress.
+- Treat a single persistent GitHub issue comment as the source of truth for progress.
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
 - When meaningful out-of-scope improvements are discovered during execution,
-  file a separate Linear issue instead of expanding scope. The follow-up issue
+  file a separate GitHub issue instead of expanding scope. The follow-up issue
   must include a clear title, description, and acceptance criteria, be placed in
   `Backlog`, be assigned to the same project as the current issue, link the
   current issue as `related`, and use `blockedBy` when the follow-up depends on
@@ -95,11 +102,11 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 
 ## Related skills
 
-- `linear`: interact with Linear.
+- GitHub tooling: interact with issues, comments, labels, pull requests, and Actions through `gh` or higher-level GitHub tools.
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- `land`: when ticket reaches `Merging`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
+- `land`: when a GitHub issue explicitly grants merge/land permission, open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
 
 ## Status map
 
@@ -108,7 +115,6 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
   - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
 - `Human Review` -> PR is attached and validated; waiting on human approval.
-- `Merging` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
 
@@ -122,7 +128,6 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `In Progress` -> continue execution flow from current scratchpad comment.
    - `Human Review` -> wait and poll for decision/review updates.
-   - `Merging` -> on entry, open and follow `.codex/skills/land/SKILL.md`; do not call `gh pr merge` directly.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
@@ -151,7 +156,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
     - Format: `<host>:<abs-workdir>@<short-sha>`
     - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/MT-32@7bdde33bc`
-    - Do not include metadata already inferable from Linear issue fields (`issue ID`, `status`, `branch`, `PR link`).
+    - Do not include metadata already inferable from GitHub issue fields (`issue number`, `status label`, `branch`, `PR link`).
 6.  Add explicit acceptance criteria and TODOs in checklist form in the same comment.
     - If changes are user-facing, include a UI walkthrough acceptance criterion that describes the end-to-end user path to validate.
     - If changes touch app files or app behavior, add explicit app-specific flow checks to `Acceptance Criteria` in the workpad (for example: launch path, changed interaction path, and expected result path).
@@ -243,8 +248,7 @@ Use this only when completion is blocked by missing required tools or missing au
 1. When the issue is in `Human Review`, do not code or change ticket content.
 2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
 3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
+4. If approved and the issue explicitly grants merge/land permission, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
 6. After merge is complete, move the issue to `Done`.
 
 ## Step 4: Rework handling
